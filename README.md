@@ -148,7 +148,7 @@ All 4 modules, [MMM-FroniusSolar](https://github.com/ChrisF1976/MMM-FroniusSolar
 - **Text Messages**: Each module uses conditional text messages based on `P_Grid` values.
 
 ![MMM-FroniusSolar4](./MMM-FroniusSolar4.png)
-![All](./All.png)
+![All](./z_All.png)
 
 ## Key Differences
 
