@@ -152,10 +152,11 @@ All 4 modules, [MMM-FroniusSolar](https://github.com/ChrisF1976/MMM-FroniusSolar
 
 ## Key Differences
 
-- **[MMM-FroniusSolar](https://github.com/ChrisF1976/MMM-FroniusSolar)**: Simpler functionality with standard gauge rendering.
-- **[MMM-FroniusSolar2](https://github.com/ChrisF1976/MMM-FroniusSolar2)**: Adds animation, making it visually engaging for displaying dynamic power changes.
-- **[MMM-FroniusSolar3](https://github.com/ChrisF1976/MMM-FroniusSolar3)**: Focuses on adaptability with dynamic sizing and layout adjustments.
-- **[MMM-FroniusSolar4](https://github.com/ChrisF1976/MMM-FroniusSolar4)**: Adds a visualisation for an additional mini PV using the ShellyAPI.
+- **[MMM-FroniusSolar](https://github.com/ChrisF1976/MMM-FroniusSolar)**: Best for simple setups prioritizing clarity and minimalism.
+- **[MMM-FroniusSolar2](https://github.com/ChrisF1976/MMM-FroniusSolar2)**: Suitable for scenarios requiring visual feedback on power flows (e.g., monitoring dynamic energy consumption).
+- **[MMM-FroniusSolar3](https://github.com/ChrisF1976/MMM-FroniusSolar3)**: Ideal for larger or customizable displays where scalability and enhanced readability are critical.
+- **[MMM-FroniusSolar4](https://github.com/ChrisF1976/MMM-FroniusSolar4)**: Similar to #2 but adds a Shelly support for monitoring small balcony solar systems.
+- **[MMM-FroniusSolar5](https://github.com/ChrisF1976/MMM-FroniusSolar5)**: Similar to #2 but monitors and visualize solar energy data from multiple Fronius inverters simultaneously
 
 ---
 
