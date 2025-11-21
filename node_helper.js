@@ -4,9 +4,10 @@ const axios = require("axios");
 module.exports = NodeHelper.create({
     start: function () {
         this.config = {};
-        this.lastShellyFetch = 0; // Timestamp of the last Shelly fetch
+        this.lastShellyFetch = 0;
         this.shellyInterval = null;
         this.froniusInterval = null;
+        this.isFetchingShelly = false; // Lock für Shelly-Abfragen
     },
 
     socketNotificationReceived: function (notification, payload) {
@@ -35,24 +36,34 @@ module.exports = NodeHelper.create({
             } catch (error) {
                 console.error("[MMM-FroniusSolar4] Error fetching Fronius data:", error.message || error);
             }
-        }, this.config.updateInterval); // Typically 5 seconds
+        }, this.config.updateInterval);
     },
 
     startShellyUpdates: function () {
         this.shellyInterval = setInterval(async () => {
             const now = Date.now();
             if (now - this.lastShellyFetch < this.config.updateIntervalShelly) {
-                return; // Skip if less than 20 seconds since the last fetch
+                return;
             }
-            this.lastShellyFetch = now; // Update timestamp for last fetch
+            
+            // Verhindere parallele Ausführungen
+            if (this.isFetchingShelly) {
+                console.log("[MMM-FroniusSolar4] Shelly fetch already in progress, skipping...");
+                return;
+            }
+            
+            this.lastShellyFetch = now;
+            this.isFetchingShelly = true;
 
             try {
                 const shellyData = await this.fetchShellyPVStatus();
                 this.sendSocketNotification("MMM-FroniusSolar4_SHELLY_DATA", shellyData);
             } catch (error) {
                 console.error("[MMM-FroniusSolar4] Error fetching Shelly data:", error.message || error);
+            } finally {
+                this.isFetchingShelly = false;
             }
-        }, 1000); // Check every second but respect the 20-second interval
+        }, 1000);
     },
 
     fetchFroniusData: async function () {
@@ -70,7 +81,7 @@ module.exports = NodeHelper.create({
                 P_Grid: data.Body?.Data?.Site?.P_Grid || 0,
                 P_Load: data.Body?.Data?.Site?.P_Load || 0,
                 P_PV: data.Body?.Data?.Site?.P_PV || 0,
-                SOC: data.Body?.Data?.Inverters?.["1"]?.SOC || 0, // State of Charge
+                SOC: data.Body?.Data?.Inverters?.["1"]?.SOC || 0,
             };
         } catch (error) {
             console.error("[MMM-FroniusSolar4] Error in fetchFroniusData:", error.message || error);
@@ -86,51 +97,92 @@ module.exports = NodeHelper.create({
             return { devices: [], totalPower: 0 };
         }
 
+        console.log(`[MMM-FroniusSolar4] Starting sequential fetch for ${this.config.shellysPV.length} Shelly devices...`);
+
+        // Sequential statt parallel - nacheinander abfragen
         for (const shellyPV of this.config.shellysPV) {
-            try {
-                const response = await axios.post(
-                    `${this.config.serverUriShelly}/device/status`,
-                    `id=${shellyPV.id}&auth_key=${this.config.authKey}`,
-                    { headers: { "Content-Type": "application/x-www-form-urlencoded" } }
-                );
+            let retryCount = 0;
+            const maxRetries = 1;
+            
+            while (retryCount <= maxRetries) {
+                try {
+                    console.log(`[MMM-FroniusSolar4] Fetching status for ${shellyPV.name} (ID: ${shellyPV.id})...`);
+                    
+                    const response = await axios.post(
+                        `${this.config.serverUriShelly}/device/status`,
+                        `id=${shellyPV.id}&auth_key=${this.config.authKey}`,
+                        { 
+                            headers: { "Content-Type": "application/x-www-form-urlencoded" },
+                            timeout: 10000
+                        }
+                    );
 
-                const data = response.data?.data?.device_status;
+                    const data = response.data?.data?.device_status;
 
-                if (data) {
-                    let power = 0;
+                    if (data) {
+                        let power = 0;
 
-                    // Check for Gen 1/2 structure (relay-based devices)
-                    if (data.relays) {
-                        const channel = parseInt(shellyPV.ch || 0, 10);
-                        power = data.meters?.[channel]?.power || 0;
-                    } else if (data["pm1:0"]) {
-                        power = data["pm1:0"].apower || 0;
-                    } else if (data["switch:0"]) {
-                        power = data["switch:0"].apower || 0;
-                    } else if (data.lights) {
-                        power = data.meters ? data.meters[0].power || 0 : 0;
+                        if (data.relays) {
+                            const channel = parseInt(shellyPV.ch || 0, 10);
+                            power = data.meters?.[channel]?.power || 0;
+                        } else if (data["pm1:0"]) {
+                            power = data["pm1:0"].apower || 0;
+                        } else if (data["switch:0"]) {
+                            power = data["switch:0"].apower || 0;
+                        } else if (data.lights) {
+                            power = data.meters ? data.meters[0].power || 0 : 0;
+                        }
+
+                        totalShellyPower += power;
+
+                        results.push({
+                            name: shellyPV.name,
+                            power: power,
+                        });
+                        
+                        console.log(`[MMM-FroniusSolar4] ✓ Successfully fetched ${shellyPV.name}: ${power}W`);
+                    } else {
+                        console.warn(`[MMM-FroniusSolar4] ✗ No device status data received for ${shellyPV.name}`);
+                        results.push({
+                            name: shellyPV.name,
+                            power: null,
+                        });
                     }
-
-                    totalShellyPower += power;
-
-                    results.push({
-                        name: shellyPV.name,
-                        power: power,
-                    });
-                } else {
-                    results.push({
-                        name: shellyPV.name,
-                        power: null,
-                    });
+                    
+                    break; // Erfolg - aus der while-Schleife ausbrechen
+                    
+                } catch (error) {
+                    if (error.response?.status === 429 && retryCount < maxRetries) {
+                        console.error(`[MMM-FroniusSolar4] ✗ Rate limit hit for ${shellyPV.name} (Retry ${retryCount + 1}/${maxRetries})`);
+                        
+                        console.log("[MMM-FroniusSolar4] Waiting 11 seconds before retry...");
+                        await new Promise(resolve => setTimeout(resolve, 11000));
+                        retryCount++;
+                        continue; // Nochmal versuchen
+                    } else {
+                        if (error.response?.status === 429) {
+                            console.error(`[MMM-FroniusSolar4] ✗ Rate limit hit for ${shellyPV.name} - no more retries`);
+                        } else {
+                            console.error(`[MMM-FroniusSolar4] ✗ Error fetching status for ${shellyPV.name}:`, error.message);
+                        }
+                        
+                        results.push({
+                            name: shellyPV.name,
+                            power: null,
+                        });
+                        break;
+                    }
                 }
-            } catch (error) {
-                results.push({
-                    name: shellyPV.name,
-                    power: null,
-                });
+            }
+            
+            // 3 Sekunden Delay zwischen den Geräten
+            if (this.config.shellysPV.indexOf(shellyPV) < this.config.shellysPV.length - 1) {
+                console.log("[MMM-FroniusSolar4] Waiting 3 seconds before next device...");
+                await new Promise(resolve => setTimeout(resolve, 3000));
             }
         }
 
+        console.log(`[MMM-FroniusSolar4] ✅ Completed fetching all ${results.length} Shelly devices`);
         return {
             devices: results,
             totalPower: totalShellyPower,
